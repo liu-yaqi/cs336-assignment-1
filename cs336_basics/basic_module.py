@@ -20,6 +20,10 @@ class Linear(nn.Module):
     def __init__(self, input_dim: int, output_dim: int):
         super(Linear, self).__init__()
         self.weight = nn.Parameter(torch.randn(output_dim, input_dim) / input_dim**0.5 ) # note: kaiming init
+        # self.weight = nn.Parameter(
+        #     nn.init.trunc_normal_(torch.empty(output_dim, input_dim), std=1.0, a=-3 * 1.0, b=3 * 1.0),
+        #     requires_grad=True
+        # )
 
     def forward(self, in_features: torch.Tensor) -> torch.Tensor:
         return in_features @ self.weight.T
@@ -29,6 +33,11 @@ class Embedding(nn.Module):
     def __init__(self, vocab_size: int, embedding_dim: int):
         super(Embedding, self).__init__()
         self.weight = nn.Parameter(torch.randn(vocab_size, embedding_dim)) # note: kaiming init
+        # self.weight = nn.Parameter(
+        #     nn.init.trunc_normal_(torch.empty(vocab_size, embedding_dim), std=1.0, a=-3 * 1.0, b=3 * 1.0 ),
+        #     requires_grad=True
+        # )
+
 
     def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
         return self.weight[token_ids]
@@ -68,7 +77,7 @@ class ScaledDotProductAttention(nn.Module):
     
 
 class MultiHeadSelfAttention(nn.Module):
-    def __init__(self, d_model: int, num_heads: int):
+    def __init__(self, d_model: int, num_heads: int, max_seq_len: int = 2048):
         super(MultiHeadSelfAttention, self).__init__()
         assert d_model % num_heads == 0, "d_model must be divisible by num_heads"
 
@@ -82,12 +91,16 @@ class MultiHeadSelfAttention(nn.Module):
 
         self.attention = ScaledDotProductAttention()
 
+        mask = torch.tril(torch.ones(max_seq_len, max_seq_len))
+        self.register_buffer('mask', mask)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         batch, n_seq, _ = x.size()
         Q = self.W_q(x).view(batch, n_seq, self.num_heads, self.d_k).transpose(-2,-3)
         K = self.W_k(x).view(batch, n_seq, self.num_heads, self.d_k).transpose(-2,-3)
         V = self.W_v(x).view(batch, n_seq, self.num_heads, self.d_k).transpose(-2,-3)
-        mask = torch.tril(torch.ones(n_seq, n_seq))
+
+        mask = self.mask[:n_seq, :n_seq]
 
         output = self.attention(Q, K, V, mask).transpose(-2,-3).contiguous().view(batch, n_seq, self.num_heads * self.d_k)
         output = self.W_o(output)  
@@ -128,6 +141,8 @@ class MultiHeadSelfAttentionRoPE(nn.Module):
 
         self.attention = ScaledDotProductAttention()
         self.rope = RoPE(self.d_k, max_seq_len, theta_base)
+        mask = torch.tril(torch.ones(max_seq_len, max_seq_len))
+        self.register_buffer('mask', mask)
 
     def forward(self, x: torch.Tensor, token_positions: torch.Tensor) -> torch.Tensor:
         batch, n_seq, _ = x.size()
@@ -138,9 +153,7 @@ class MultiHeadSelfAttentionRoPE(nn.Module):
         Q = self.rope(Q, token_positions)
         K = self.rope(K, token_positions)
 
-        mask = torch.tril(torch.ones(n_seq, n_seq))
-
-        output = self.attention(Q, K, V, mask).transpose(-2,-3).contiguous().view(batch, n_seq, self.num_heads * self.d_k)
+        output = self.attention(Q, K, V, self.mask[:n_seq, :n_seq]).transpose(-2,-3).contiguous().view(batch, n_seq, self.num_heads * self.d_k)
         output = self.output_proj(output)  
         return output
     
@@ -223,7 +236,8 @@ def _sample_next_token(
     if temperature == 0:
         return int(torch.argmax(logits).item())
 
-    probs = torch.softmax(logits / temperature, dim=-1)
+    # probs = torch.softmax(logits / temperature, dim=-1)
+    probs = softmax(logits / temperature, dim=-1)
 
     if top_p < 1.0:
         sorted_probs, sorted_indices = torch.sort(probs, descending=True)
@@ -286,31 +300,3 @@ def generate_tokens(
         model.train()
 
     return generated
-
-
-@torch.no_grad()
-def decode(
-    model: nn.Module,
-    tokenizer: Any,
-    prompt: str,
-    max_new_tokens: int,
-    temperature: float = 1.0,
-    top_p: float = 1.0,
-    end_token: str = "<|endoftext|>",
-    device: str | torch.device | None = None,
-) -> str:
-    prompt_token_ids = tokenizer.encode(prompt)
-    end_token_id = None
-    if hasattr(tokenizer, "special_tokens") and end_token in tokenizer.special_tokens:
-        end_token_id = tokenizer.dstoi[end_token.encode("utf-8")]
-
-    generated_ids = generate_tokens(
-        model=model,
-        prompt_token_ids=prompt_token_ids,
-        max_new_tokens=max_new_tokens,
-        temperature=temperature,
-        top_p=top_p,
-        end_token_id=end_token_id,
-        device=device,
-    )
-    return tokenizer.decode(generated_ids)

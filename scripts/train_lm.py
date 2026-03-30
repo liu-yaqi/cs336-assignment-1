@@ -12,24 +12,29 @@ from cs336_basics.basic_module import CrossEntropy, TransformerLM, generate_toke
 from cs336_basics.data import Dataset
 from cs336_basics.optimizer import SimpleAdamW, get_lr_cosine_schedule, gradient_clipping
 from cs336_basics.tokenizer import Tokenizer
+from cs336_basics.utils import get_log_and_output_dir
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train TransformerLM with memmap token data.")
 
     # Data
-    parser.add_argument("--train-data-path", type=str, required=True, help="Path to train token binary file.")
-    parser.add_argument("--valid-data-path", type=str, required=True, help="Path to valid token binary file.")
+    parser.add_argument("--train-data-path", 
+                        type=str,
+                        default="data/train.bin")
+    parser.add_argument("--valid-data-path", 
+                        type=str,
+                        default="data/valid.bin")    
     parser.add_argument(
         "--data-dtype",
         type=str,
-        default="uint16",
-        choices=["uint16", "int32", "int64"],
+        default="uint32",
+        choices=["uint16", "uint32", "int64"],
         help="dtype used by token binary files.",
     )
 
     # Model
-    parser.add_argument("--vocab-size", type=int, default=50527)
+    parser.add_argument("--vocab-size", type=int, default=50257)
     parser.add_argument("--d-model", type=int, default=512)
     parser.add_argument("--num-heads", type=int, default=16)
     parser.add_argument("--d-ff", type=int, default=1344)
@@ -39,7 +44,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rms-eps", type=float, default=1e-8)
 
     # Optimizer and schedule
-    parser.add_argument("--learning-rate", type=float, default=2e-4)
+    parser.add_argument("--learning-rate", type=float, default=5e-4)
     parser.add_argument("--min-learning-rate", type=float, default=1e-5)
     parser.add_argument("--warmup-steps", type=int, default=2000)
     parser.add_argument("--cosine-cycle-steps", type=int, default=20000) # total
@@ -54,13 +59,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--context-length", type=int, default=256)
     parser.add_argument("--train-steps", type=int, default=20000)
     parser.add_argument("--eval-interval", type=int, default=500)
-    parser.add_argument("--eval-steps", type=int, default=20)
+    parser.add_argument("--eval-steps", type=int, default=100)   
+    parser.add_argument("--eval-gen-interval", type=int, default=2000)
     parser.add_argument("--log-interval", type=int, default=100)
 
     # Runtime and output
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--checkpoint-dir", type=str, required=True)
+    parser.add_argument("--checkpoint-dir", type=str, default="logs")
     parser.add_argument("--run-name", type=str, default="run")
     parser.add_argument("--use-wandb", action="store_true")
     parser.add_argument("--wandb-project", type=str, default="cs336-basics")
@@ -69,7 +75,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tokenizer-vocab-path", type=str, default="data/fromvalid/tinystories_vocab_10k.txt")
     parser.add_argument("--tokenizer-merges-path", type=str, default="data/fromvalid/tinystories_merges_10k.txt")
     parser.add_argument("--gen-prompt", type=str, default="last year, i went to a ")
-    parser.add_argument("--gen-max-new-tokens", type=int, default=80)
+    parser.add_argument("--gen-max-new-tokens", type=int, default=500)
     parser.add_argument("--gen-temperature", type=float, default=1.0)
     parser.add_argument("--gen-top-p", type=float, default=0.9)
 
@@ -79,7 +85,7 @@ def parse_args() -> argparse.Namespace:
 def _dtype_from_string(dtype_name: str) -> np.dtype:
     dtype_map = {
         "uint16": np.uint16,
-        "int32": np.int32,
+        "uint32": np.uint32,
         "int64": np.int64,
     }
     return dtype_map[dtype_name]
@@ -155,49 +161,17 @@ def save_checkpoint(
     )
 
 
-def generate_story_from_best(args: argparse.Namespace, run_dir: Path) -> None:
-    best_path = run_dir / "best.pt"
-    if not best_path.exists():
-        print(f"[generation] skipped: best checkpoint not found at {best_path}")
-        return
-
-    vocab_path = Path(args.tokenizer_vocab_path)
-    merges_path = Path(args.tokenizer_merges_path)
-    if not vocab_path.exists() or not merges_path.exists():
-        print(
-            "[generation] skipped: tokenizer files missing. "
-            f"vocab={vocab_path} merges={merges_path}"
-        )
-        return
-
-    tokenizer = Tokenizer.from_files(
-        vocab_filepath=vocab_path,
-        merges_filepath=merges_path,
-        special_tokens=["<|endoftext|>"],
-    )
-
-    checkpoint = torch.load(best_path, map_location=args.device)
-    best_model = TransformerLM(
-        vocab_size=args.vocab_size,
-        d_model=args.d_model,
-        num_heads=args.num_heads,
-        d_ff=args.d_ff,
-        num_layers=args.num_layers,
-        max_seq_len=args.max_seq_len,
-        theta_base=args.theta_base,
-        eps=args.rms_eps,
-    ).to(args.device)
-    best_model.load_state_dict(checkpoint["model_state_dict"])
-    best_model.eval()
+def generate_story(model, tokenizer, args: argparse.Namespace) -> None:
 
     prompt_token_ids = tokenizer.encode(args.gen_prompt)
     if len(prompt_token_ids) == 0:
         print("[generation] skipped: encoded prompt is empty")
         return
 
-    end_token_id = tokenizer.dstoi.get(b"<|endoftext|>")
+    end_token_id = tokenizer.encode("<|endoftext|>")
+
     generated_ids = generate_tokens(
-        model=best_model,
+        model=model,
         prompt_token_ids=prompt_token_ids,
         max_new_tokens=args.gen_max_new_tokens,
         temperature=args.gen_temperature,
@@ -206,21 +180,22 @@ def generate_story_from_best(args: argparse.Namespace, run_dir: Path) -> None:
         device=args.device,
     )
     story = tokenizer.decode(generated_ids)
-
-    print(f"[generation] prompt: {args.gen_prompt}")
-    print("[generation] story:")
-    print(story)
-
-    output_path = run_dir / "best_model_story.txt"
-    output_path.write_text(story, encoding="utf-8")
-    print(f"[generation] saved to {output_path}")
+    return story
 
 
 def main() -> None:
     args = parse_args()
+    print(args)
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
+    log, output_dir = get_log_and_output_dir(args.checkpoint_dir, args.run_name)
+    run_dir = Path(output_dir)
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    config = vars(args).copy()
+    with (run_dir / "config.json").open("w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2)
     dtype = _dtype_from_string(args.data_dtype)
     train_dataset = load_memmap_dataset(args.train_data_path, dtype)
     valid_dataset = load_memmap_dataset(args.valid_data_path, dtype)
@@ -235,6 +210,9 @@ def main() -> None:
         theta_base=args.theta_base,
         eps=args.rms_eps,
     ).to(args.device)
+    model = torch.compile(model)
+
+    tokenizer = Tokenizer(args.tokenizer_vocab_path, args.tokenizer_merges_path)
 
     optimizer = SimpleAdamW(
         model.parameters(),
@@ -245,15 +223,7 @@ def main() -> None:
     )
 
     loss_fn = CrossEntropy()
-
-    checkpoint_dir = Path(args.checkpoint_dir)
-    run_dir = checkpoint_dir / args.run_name
-    run_dir.mkdir(parents=True, exist_ok=True)
-
-    config = vars(args).copy()
-    with (run_dir / "config.json").open("w", encoding="utf-8") as f:
-        json.dump(config, f, indent=2)
-
+    
     wandb_run = None
     if args.use_wandb:
         try:
@@ -271,8 +241,8 @@ def main() -> None:
             it=step,
             max_learning_rate=args.learning_rate,
             min_learning_rate=args.min_learning_rate,
-            warmup_steps=args.warmup_steps,
-            cosine_cycle_steps=args.cosine_cycle_steps,
+            warmup_iters=args.warmup_steps,
+            cosine_cycle_iters=args.cosine_cycle_steps,
         )
         for group in optimizer.param_groups:
             group["lr"] = lr
@@ -299,7 +269,7 @@ def main() -> None:
         train_loss = float(loss.item())
 
         if step % args.log_interval == 0:
-            print(
+            log(
                 "step="
                 f"{step} "
                 f"train_loss={train_loss:.4f} "
@@ -333,7 +303,7 @@ def main() -> None:
                 eval_steps=args.eval_steps,
             )
             valid_perplexity = _loss_to_perplexity(valid_loss)
-            print(f"[eval] step={step} valid_loss={valid_loss:.4f} valid_ppl={valid_perplexity:.4f}")
+            log(f"[eval] step={step} valid_loss={valid_loss:.4f} valid_ppl={valid_perplexity:.4f}")
             if wandb_run is not None:
                 wandb_run.log(
                     {
@@ -354,8 +324,38 @@ def main() -> None:
                     valid_loss=valid_loss,
                     config=config,
                 )
+        if step % args.eval_gen_interval == 0 or step == args.train_steps or step==1:
+            log(f"[generation] step={step}")
+            story = generate_story(model, tokenizer, args=args)
+            log(f"[generation] prompt: {args.gen_prompt}")
+            log("[generation] story:")
+            log(story)
+            
+    
+    best_path = run_dir / "best.pt"
+    if not best_path.exists():
+        log(f"[generation] skipped: best checkpoint not found at {best_path}")
+        return
 
-    generate_story_from_best(args=args, run_dir=run_dir)
+    checkpoint = torch.load(best_path, map_location=args.device)
+    best_model = TransformerLM(
+        vocab_size=args.vocab_size,
+        d_model=args.d_model,
+        num_heads=args.num_heads,
+        d_ff=args.d_ff,
+        num_layers=args.num_layers,
+        max_seq_len=args.max_seq_len,
+        theta_base=args.theta_base,
+        eps=args.rms_eps,
+    ).to(args.device)
+    best_model.load_state_dict(checkpoint["model_state_dict"])
+    best_model.eval()
+
+    story = generate_story(best_model, tokenizer, args=args)
+
+    log(f"[generation] prompt: {args.gen_prompt}")
+    log("[generation] story:")
+    log(story)
 
     if wandb_run is not None:
         wandb_run.finish()

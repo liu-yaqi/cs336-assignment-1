@@ -20,7 +20,7 @@ def save_checkpoint(
             we've completed.
         out (str | os.PathLike | BinaryIO | IO[bytes]): Path or file-like object to serialize the model, optimizer, and iteration to.
     """
-
+    model = _unwrap_model(model)
     checkpoint = {
         'iteration': iteration,
         'model_state_dict': model.state_dict(),
@@ -82,8 +82,14 @@ def load_checkpoint(
     return checkpoint['iteration']
 
 
+def _unwrap_model(model: torch.nn.Module) -> torch.nn.Module:
+    # torch.compile wraps the original model and prefixes state_dict keys with _orig_mod.
+    # vLLM expects the original key names, so always sync/save with the unwrapped module.
+    return model._orig_mod if hasattr(model, "_orig_mod") else model
+
 from datetime import datetime
 import os
+import time
 def get_log_and_output_dir(output_dir, model_name):
     now = datetime.now()
     current_time = now.strftime("%m-%d-%H-%M-%S") + "-" + model_name
