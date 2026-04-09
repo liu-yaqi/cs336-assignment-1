@@ -32,16 +32,18 @@
 
 ### 使用
 
-#### train
-train_bpe.py
+#### 训练分词器
+```bash
+uv run scripts/train_bpe.py --input TinyStoriesV2-GPT4-train.txt --vocab-size 50257
+```
 
-#### tokenizer
+#### 分词器调用
 ```python
 from cs336_basics.tokenizer import Tokenizer
 
 tokenizer = Tokenizer.from_files(
-    vocab_filepath=args.vocab_path,
-    merges_filepath=args.merge_path,
+    vocab_filepath="data/tinystories_vocab_50257.txt",
+    merges_filepath="data/tinystories_merges_50257.txt",
     special_tokens=["<|endoftext|>"]
 )
 
@@ -97,7 +99,7 @@ text = tokenizer.decode(ids)
 
 <img src="train_result/0e411666-22da-4f38-bfe0-4e6b234ee2d6.png" width="310"/> <img src="train_result/959e0a05-8b82-4e42-b0c0-ddf537154737.png" width="310"/>
 
-<img src="train_result/f3c96149-94bf-4c87-bee4-9450e2eefa95.png">
+<img src="train_result/f3c96149-94bf-4c87-bee4-9450e2eefa95.png" width="620"/>
 
 ```
 One day, a little cat named Tom went for a walk. He was very happy because
