@@ -105,13 +105,13 @@ def main() -> None:
     parser.add_argument(
         "--input-path",
         type=str,
-        default="data/TinyStoriesV2-GPT4-valid.txt",
+        default="data/TinyStoriesV2-GPT4-train.txt",
         help="Path to TinyStories training corpus.",
     )
     parser.add_argument(
         "--vocab-size",
         type=int,
-        default=10000,
+        default=50257,
         help="Target vocabulary size.",
     )
     parser.add_argument(
@@ -139,7 +139,7 @@ def main() -> None:
     parser.add_argument(
         "--tiny-docs-path",
         type=str,
-        default="data/TinyStoriesV2-GPT4-valid.txt",
+        default="root/autodl-tmp/TinyStoriesV2-GPT4-valid.txt",
         help="TinyStories corpus path for report sampling.",
     )
     args = parser.parse_args()

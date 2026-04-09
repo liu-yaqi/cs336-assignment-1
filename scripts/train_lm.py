@@ -59,7 +59,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--context-length", type=int, default=256)
     parser.add_argument("--train-steps", type=int, default=20000)
     parser.add_argument("--eval-interval", type=int, default=500)
-    parser.add_argument("--eval-steps", type=int, default=100)   
+    parser.add_argument("--eval-steps", type=int, default=50)   
     parser.add_argument("--eval-gen-interval", type=int, default=2000)
     parser.add_argument("--log-interval", type=int, default=100)
 
@@ -212,7 +212,11 @@ def main() -> None:
     ).to(args.device)
     model = torch.compile(model)
 
-    tokenizer = Tokenizer(args.tokenizer_vocab_path, args.tokenizer_merges_path)
+    tokenizer = Tokenizer.from_files(
+        vocab_filepath="data/tinystories_vocab_50257.txt",
+        merges_filepath="data/tinystories_merges_50257.txt",
+        special_tokens=["<|endoftext|>"]
+        )
 
     optimizer = SimpleAdamW(
         model.parameters(),
