@@ -1,6 +1,6 @@
 # CS336 Basics - BPE Tokenizer & Transformer LM
 
-实现 BPE 分词器和 Transformer 语言模型的训练。
+实现 BPE 分词器和 Transformer 语言模型的训练。飞书文档有更详细说明 [here](https://scnms1qdn8sz.feishu.cn/wiki/WmpuwmeAviI1wUkolVccISRnnih?from=from_copylink)
 
 ## 代码结构
 
